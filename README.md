@@ -1,4 +1,4 @@
-# file-guard v3.6.2
+# file-guard v3.6.3
 
 ![file-guard](docs/thumbnail.png)
 
