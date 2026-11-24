@@ -97,9 +97,11 @@ function judge(rule, line, idx, inFence, fileKind) {
   const before = line.slice(Math.max(0, idx - 60), idx);
   const inQuote = (line.slice(0, idx).match(/[`"Ã¢â‚¬Å“Ã¢â‚¬ÂÃ¢â‚¬ËœÃ¢â‚¬â„¢']/g) || []).length % 2 === 1;
   if ((rule.neg || /^(?:EA2|M2|M3)$/.test(rule.id)) && !CONCEAL.test(line)) { if (NEG_BEFORE.test(before)) { f *= 0.1; notes.push('negated, as in a warning'); } else if (inQuote) { f *= 0.3; notes.push('quoted as an example'); } }
+  if (f === 1 && fileKind === 'prose' && !inFence && /[`"'\u201c\u2018]/.test(line.slice(Math.max(0, idx - 3), idx)) && !CONCEAL.test(line)) { const sb = line.slice(0, idx).split(/(?<=[.!?])\s/).pop().slice(-240); if (/\b(?:never|do not|don'?t|must not|should not|shouldn'?t|avoid|refuse to|not to)\b/i.test(sb)) { f *= 0.35; notes.push('quoted inside a prohibition (never/avoid ...)'); } }
   if (fileKind === 'prose' && !inFence && /^(?:PE3|E[1-5]|AS\d|SC1)$/.test(rule.id)) { // credential/exfil wording in prose counts only when somebody is told to DO something with a secret
     if (!(ACTION.test(line) && SECRETISH.test(line))) { f *= 0.2; notes.push('mentions a secret but no one is told to read or send it'); }
   }
+  if (rule.id === 'PE3' && fileKind === 'code' && /^\s*(?:\/\/|#|\*|\/\*)/.test(line) && !SENDS.test(line)) { f *= 0.4; notes.push('only mentioned in a code comment'); }
   if (rule.id === 'PE3' && !ACTION.test(line)) { f *= 0.5; notes.push('names a credential store but nothing reads or sends it'); }
   if (PLACEHOLDER.test(line) && /^(?:PE3|SC1)$/.test(rule.id) && !CONCEAL.test(line) && !SENDS.test(line)) { f *= 0.4; notes.push('placeholder / environment variable, not a real secret'); }
   return [f, notes];
@@ -123,7 +125,7 @@ function scanText(rel, text, kind) {
           if (r.kind === 'code' && !(k === 'code' || inFence || how)) continue;
           if (r.kind === 'prose' && !(k === 'prose' && !inFence || how)) continue;
           const m = r.rx.exec(c); if (!m) continue;
-          const key = r.id + '|' + (how ? 'v' : i) + '|' + m[0].slice(0, 30); if (seenKey.has(key)) continue; seenKey.add(key);
+          const key = r.id + '|' + (how ? 'v' : i) + '|' + m[0].slice(0, 30); if (seenKey.has(key)) continue; seenKey.add(key); if (how && out.some(o => !o.how && o.id === r.id && o.text === m[0].slice(0, 100))) continue; // same words already judged in context in the plain text
           const [f, notes] = judge(r, c, m.index, inFence, kind);
           const score = Math.min(1, r.w * f + (how ? 0.05 : 0));
           out.push({ file: rel, line: how ? 0 : i + 1, id: r.id, fam: r.fam, score, base: r.w, text: m[0].slice(0, 100), how, why: r.why || FAMS[r.fam] || '', notes, inFence });
@@ -166,9 +168,9 @@ const allowed = f => ALLOW.some(a => a.id === f.id && (!a.file || f.file === a.f
 for (let i = findings.length - 1; i >= 0; i--) if (allowed(findings[i])) findings.splice(i, 1);
 // A single weak signal is not enough to block: generic tool/agency/supply-chain hits are capped at MEDIUM
 // unless a decisive finding from another family backs them up in the same skill.
-const WEAK = /^(?:TM|EA|OH|SC|AS|RA|PE[1245]|AR2|MP[123]|P[6-9]|H2|K1)/, DECISIVE = /^(?:P[1-5]|H1|X1|C1|M\d|AR|E\d|B1|PE3|L1)/;
+const WEAK = /^(?:TM|EA|OH|SC|AS|RA|PE[1245]|AR2|MP[123]|P[6-9]|H2|K1|M3|C2|E4)/, DECISIVE = /^(?:P[1-5]|H1|X1|C1|M[12]|AR|E[1-3]|B1|PE3|L1)/;
 const strong = findings.filter(f => f.score >= 0.85 && DECISIVE.test(f.id));
-for (const f of findings) if (WEAK.test(f.id) && f.score > 0.75 && !(f.id === 'K1' && f.score >= 0.9) && !strong.some(s => s.fam !== f.fam)) { f.notes = [...(f.notes || []), 'single weak signal, capped']; f.score = /\.(?:md|markdown|txt|rst|mdx)$/i.test(f.file) ? Math.min(f.score, 0.55) : 0.75; }
+for (const f of findings) if (WEAK.test(f.id) && f.score > 0.75 && !(f.id === 'K1' && f.score >= 0.9) && !strong.some(s => s.fam !== f.fam && s.file === f.file)) { f.notes = [...(f.notes || []), 'single weak signal, capped']; f.score = /\.(?:md|markdown|txt|rst|mdx)$/i.test(f.file) ? Math.min(f.score, 0.55) : 0.75; }
 
 // ---------- group, score, verdict ----------
 const groups = new Map();

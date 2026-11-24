@@ -51,7 +51,8 @@ function structure(rel, src) {
   for (const r of escs) if (/\\x[0-9a-f]{2}|\\u[0-9a-f]{4}/i.test(r) && BAD_WORD.test(unesc(r.slice(1, -1)).trim())) { out.push(F(rel, 0, 'S2', 'Obfuscation', 0.85, `"${unesc(r.slice(1, -1)).slice(0, 40)}" hidden as escape codes`, 'A dangerous word is written as \\x/\\u codes so a text search cannot see it')); break; }
   const decode = py ? /\b(?:b64decode|b32decode|a85decode|unhexlify|marshal\.loads|zlib\.decompress|codecs\.decode|fromhex)\b/ : /\b(?:atob|fromCharCode|unescape|inflateSync|gunzipSync)\b|Buffer\s*\.\s*from\s*\([^)]*"\d+"\s*\)|\.toString\(\s*"\d+"\s*\)/;
   const runs = py ? /\b(?:exec|eval|compile)\s*\(|\b__import__\s*\(|\bos\.system\b|\bos\.popen\b|\bsubprocess\.\w+\s*\(/ : /\beval\s*\(|\bnew\s+Function\b|\bvm\.\w+\s*\(|\b(?:exec|execSync|spawn|spawnSync|execFile)\s*\(/;
-  if (decode.test(code) && runs.test(code)) out.push(F(rel, 0, 'S3', 'Remote Execution', 0.9, 'decodes data and runs code in the same file', 'Decode-then-run is how a payload is hidden from readers; legitimate skills almost never need it'));
+  const near = (() => { const dg = new RegExp(decode.source, 'g'); let m; while ((m = dg.exec(code))) { const w = code.slice(Math.max(0, m.index - 300), m.index + 300); if (runs.test(w)) return true; } return false; })();
+  if (near) out.push(F(rel, 0, 'S3', 'Remote Execution', 0.9, 'decodes data and runs code within a few lines of each other', 'Decode-then-run is how a payload is hidden from readers; legitimate skills almost never need it'));
   const NL = '(?!"\\d+"\\s*[,)])'; // not a plain string literal
   if (py) {
     add(new RegExp(`\\b(?:exec|eval)\\s*\\(\\s*${NL}`, 'g'), 'S4', 0.65, 'Runs text as code: what it runs is not visible in the file');
