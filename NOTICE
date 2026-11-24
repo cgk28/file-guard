@@ -1,0 +1,11 @@
+file-guard includes skillscan (scripts/skillscan.mjs, scripts/skillscan-rules.json).
+
+The pattern tables in skillscan-rules.json are derived from NVIDIA SkillSpector v2.12.0
+https://github.com/NVIDIA/skillspector
+Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. Licensed under the Apache License, Version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0).
+
+Changes made: the regular expressions were converted from Python to JavaScript syntax, the per-category tables
+were merged into one JSON file, one rule (bare character repetition) was replaced by a stricter one, and the
+scanner around them (context judging, de-duplication, compound checks, scoring) is new code.
+SkillSpector itself is not included and is not required.
