@@ -101,7 +101,7 @@ const backupPass = () => process.env.FILEGUARD_PASS || (existsSync(P.sealedB) ? 
 
 // ---- key + baseline ----
 const fpOf = pem => sha(pem).slice(0, 16);
-function pinned() { return A.pubfp || process.env.FILEGUARD_PUBFP || (existsSync(P.pin) ? readFileSync(P.pin, 'utf8').trim() : ''); }
+function pinned() { return A.pubfp || (existsSync(P.pin) ? readFileSync(P.pin, 'utf8').trim() : '') || process.env.FILEGUARD_PUBFP || ''; }
 function pubKey() {
   if (!existsSync(P.pub)) die('No public key. Run keygen (or auto) first.');
   const pem = readFileSync(P.pub, 'utf8'), fp = fpOf(pem), pin = pinned();
@@ -150,7 +150,7 @@ if (cmd === 'keygen') {
   process.env.FILEGUARD_SIGNPASS = randomBytes(18).toString('base64url'); seal(process.env.FILEGUARD_SIGNPASS);
   if (!existsSync(P.sealedB)) seal(randomBytes(18).toString('base64url'), P.sealedB); if (A.bind === '1') writeFileSync(P.bind, '1'); // backups: sealed passphrase; machine binding only with --bind 1
   const fp = doKeygen(); writeFileSync(P.pin, fp); doInit();
-  if (process.platform === 'win32') try { ps('[Environment]::SetEnvironmentVariable("FILEGUARD_PUBFP",$env:FG_P,"User")', { FG_P: fp }); } catch {}
+  if (process.platform === 'win32' && !process.env.FILEGUARD_PUBFP) try { ps('[Environment]::SetEnvironmentVariable("FILEGUARD_PUBFP",$env:FG_P,"User")', { FG_P: fp }); } catch {}
   console.log(`OK tier-0 protection active. Fingerprint ${fp}. Passphrase sealed by the OS (not shown).\nFor stronger protection against a hijacked agent, run setup.ps1 -Auto once (owner holds the passphrase).`);
 } else if (cmd === 'rebaseline') { // re-sign after the OWNER approved the changes in chat (tier 0 only)
   if (!A.reason) die('Give --reason "what the owner approved".');
@@ -197,7 +197,7 @@ if (cmd === 'keygen') {
   const m = JSON.parse(readFileSync(P.man, 'utf8')).data; const files = [...Object.keys(m.locked), ...Object.keys(m.append)].filter(present);
   const pack = { at: new Date().toISOString(), files: Object.fromEntries(files.map(f => [f, readB(f).toString('base64')])) };
   const out = resolve(A.out || join(store, `backup-${new Date().toISOString().replace(/[:.]/g, '-')}.fg`)); mkdirSync(dirname(out), { recursive: true });
-  const bound = A.bind === '1' || existsSync(P.bind), bp = backupPass(); writeFileSync(out, enc(Buffer.from(JSON.stringify(pack)), bound ? bp + '|' + machineId() : bp, bound ? 'FG2' : 'FG1'));
+  const bound = A.bind === '1' || existsSync(P.bind), bp = backupPass(); if (bound && !machineId()) die('This system has no readable machine id, so --bind cannot protect the backup. Run without --bind.'); writeFileSync(out, enc(Buffer.from(JSON.stringify(pack)), bound ? bp + '|' + machineId() : bp, bound ? 'FG2' : 'FG1'));
   const keep = +(A.keep || 7), old = readdirSync(dirname(out)).filter(x => /^backup-.*\.fg$/.test(x)).sort(); for (const x of old.slice(0, Math.max(0, old.length - keep))) unlinkSync(join(dirname(out), x));
   logAdd('backup', basename(out)); console.log(`OK encrypted backup (${files.length} files) -> ${out}; keeping last ${keep}. Copy it OFF this machine too.`);
 } else if (cmd === 'restore-test') {
