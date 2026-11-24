@@ -15,7 +15,7 @@ const dir = resolve(A.dir || '.');
 const list = (v, d) => (v ?? d).split(',').map(s => s.trim()).filter(Boolean);
 const base = process.env.LOCALAPPDATA || join(homedir(), '.local', 'share');
 const store = resolve(A.store || join(base, 'FileGuard', basename(dir)));
-const P = { man: join(store, 'manifest.json'), pub: join(store, 'public.pem'), good: join(store, 'good'), q: join(store, 'quarantine'), log: join(store, 'audit.log'), pin: join(store, 'pin.txt'), sealed: join(store, 'signpass.sealed'), sealedB: join(store, 'backuppass.sealed'), bind: join(store, 'bind.flag'), pend: join(store, 'pending.json') };
+const P = { man: join(store, 'manifest.json'), pub: join(store, 'public.pem'), good: join(store, 'good'), q: join(store, 'quarantine'), log: join(store, 'audit.log'), pin: join(store, 'pin.txt'), sealed: join(store, 'signpass.sealed'), sealedB: join(store, 'backuppass.sealed'), bind: join(store, 'bind.flag'), pend: join(store, 'pending.json'), anchors: join(store, 'anchors.txt') };
 const keyFile = resolve(A.keyfile || join(store, 'owner.key.enc'));
 const sha = b => createHash('sha256').update(b).digest('hex');
 const die = (m, c = 2) => { console.error(m); process.exit(c); };
@@ -34,7 +34,7 @@ function logAdd(event, detail) {
   mkdirSync(store, { recursive: true }); const L = logLines(); const prev = L.length ? JSON.parse(L.at(-1)).h : '0';
   const e = { t: new Date().toISOString(), event, detail, prev }; e.h = sha(prev + JSON.stringify([e.t, event, detail])); appendFileSync(P.log, JSON.stringify(e) + '\n');
 }
-function logCheck(seed) { try { const L = logLines(); if (!L.length) return 'LOG MISSING or empty'; if (seed && JSON.parse(L[0]).h !== seed) return 'LOG start altered'; let prev = '0'; for (const l of L) { const e = JSON.parse(l); if (e.prev !== prev || e.h !== sha(prev + JSON.stringify([e.t, e.event, e.detail]))) return 'LOG chain broken'; prev = e.h; } return ''; } catch { return 'LOG unreadable'; } }
+function logCheck(seed) { try { const L = logLines(); if (!L.length) return 'LOG MISSING or empty'; if (seed && JSON.parse(L[0]).h !== seed) return 'LOG start altered'; const hs = new Set(L.map(l => JSON.parse(l).h)); if (existsSync(P.anchors)) for (const a of readFileSync(P.anchors, 'utf8').split('\n').filter(Boolean)) if (!hs.has(a.split(' ')[1])) return 'LOG anchor missing (history rewritten or truncated)'; let prev = '0'; for (const l of L) { const e = JSON.parse(l); if (e.prev !== prev || e.h !== sha(prev + JSON.stringify([e.t, e.event, e.detail]))) return 'LOG chain broken'; prev = e.h; } return ''; } catch { return 'LOG unreadable'; } }
 
 // ---- files: workspace-relative keys, or `ext:<absolute path>` for config outside the workspace ----
 const isExt = f => f.startsWith('ext:');
@@ -43,7 +43,10 @@ const gp = f => (isExt(f) ? join(P.good, '_ext', sha(f).slice(0, 12) + '-' + bas
 const lst = f => { try { return lstatSync(ap(f)); } catch { return null; } };
 const present = f => !!lst(f);
 const readB = f => readFileSync(ap(f));
-const hashOf = f => (lst(f).isSymbolicLink() ? sha('LINK:' + readlinkSync(ap(f))) : sha(readB(f)));
+// External app-written JSON (e.g. aicwgw.json) is hashed in canonical form: key order and array order are ignored,
+// so a harmless reshuffle by the app is not an alert; any real value change still is.
+const canon = v => Array.isArray(v) ? '[' + v.map(x => canon(x)).sort().join(',') + ']' : v && typeof v === 'object' ? '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}' : JSON.stringify(v);
+const hashOf = f => { if (lst(f).isSymbolicLink()) return sha('LINK:' + readlinkSync(ap(f))); const b = readB(f); if (isExt(f) && /\.json$/i.test(f) && b.length <= 8 * LIM) try { return sha('JSON:' + canon(JSON.parse(b.toString('utf8')))); } catch {} return sha(b); };
 const SKIP = new Set(['node_modules', '.git', '__pycache__']);
 function walk(p, out = []) { // every file type, symlinks listed as entries (never followed)
   const abs = isAbsolute(p), full = abs ? p : join(dir, p); let st; try { st = lstatSync(full); } catch { return out; }
@@ -57,13 +60,22 @@ const DEF = { locked: ['SOUL.md', 'AGENTS.md', 'IDENTITY.md', 'USER.md', 'TOOLS.
 // ---- content scan (what an injected instruction looks like; heuristic, not proof) ----
 const RULES = [
   [/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]|[\u{E0000}-\u{E007F}]/u, 'HIGH', 'invisible Unicode characters'],
-  [/ignore (all |any |the )?(previous|prior|above|earlier) (instructions|rules)|disregard (the |all )?(rules|instructions)|bỏ qua (mọi |các |tất cả )?(quy tắc|hướng dẫn|chỉ dẫn)|do not (tell|inform) the (user|owner)|đừng (nói|báo) (với )?(anh|chủ)/i, 'HIGH', 'instruction-override phrase'],
-  [/(send|post|upload|exfiltrate|gửi|đăng).{0,40}(token|secret|password|api[_ -]?key|mật khẩu|credential)/i, 'HIGH', 'secret-exfiltration phrase'],
+  [/ignore (all |any |the )?(previous|prior|above|earlier) (instructions|rules)|disregard (the |all )?(rules|instructions)|bá» qua (má»i |cÃ¡c |táº¥t cáº£ )?(quy táº¯c|hÆ°á»›ng dáº«n|chá»‰ dáº«n)|do not (tell|inform) the (user|owner)|Ä‘á»«ng (nÃ³i|bÃ¡o) (vá»›i )?(anh|chá»§)/i, 'HIGH', 'instruction-override phrase'],
+  [/(send|post|upload|exfiltrate|gá»­i|Ä‘Äƒng).{0,40}(token|secret|password|api[_ -]?key|máº­t kháº©u|credential)/i, 'HIGH', 'secret-exfiltration phrase'],
   [/powershell(\.exe)?\s+-e(nc|ncodedcommand)|\biex\b|Invoke-Expression|curl[^\n]{0,60}\|\s*(sh|bash)|\beval\(|FromBase64String/i, 'HIGH', 'remote/encoded command execution'],
   [/https?:\/\/[^\s)>"']+/i, 'MED', 'URL'],
   [/[A-Za-z0-9+/]{100,}={0,2}/, 'MED', 'long base64-like blob'],
 ];
-const scan = t => RULES.filter(([re]) => re.test(t)).map(([, s, w]) => [s, w]);
+// Normalise before scanning (scanners are beaten by packing/obfuscation): NFKC, drop invisible chars, strip shell-obfuscation (c${u}rl, quotes, ^, `), join "a"+"b", and also scan decoded base64 payloads.
+function variants(t) {
+  const v = [t], n = t.normalize('NFKC').replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]|[\u{E0000}-\u{E007F}]/gu, '');
+  if (n !== t) v.push(n);
+  for (const m of t.matchAll(/[A-Za-z0-9+/]{24,}={0,2}/g)) { try { const d = Buffer.from(m[0], 'base64').toString('utf8'); if (/^[\t\r\n\x20-\x7e]{12,}$/.test(d)) v.push(d); } catch {} }
+  return v;
+}
+// UTF-16 (PowerShell's default >) would otherwise hide text from every pattern: decode by BOM, else drop NULs.
+const txt = b => b.toString('utf8').replace(/\0/g, '');
+const scan = t => { const seen = new Set(), out = []; variants(t).forEach((x, i) => RULES.forEach(([re, s, w]) => { if (re.test(x) && !seen.has(w)) { seen.add(w); out.push([s, i ? w + ' (after decoding/deobfuscation)' : w]); } })); return out; };
 function lineDiff(oldT, newT) { const o = new Map(); for (const l of oldT.split(/\r?\n/)) o.set(l, (o.get(l) || 0) + 1); const add = [], c = new Map(o); for (const l of newT.split(/\r?\n/)) { if (c.get(l) > 0) c.set(l, c.get(l) - 1); else add.push(l); } const rem = []; for (const [l, n] of c) for (let i = 0; i < n; i++) rem.push(l); return { add, rem }; }
 
 // ---- OS-bound sealing of the auto-mode passphrase (tier 0) ----
@@ -150,12 +162,13 @@ if (cmd === 'keygen') {
   const out = []; let high = false; const restorable = [];
   const flag = (kind, f, extra = '') => out.push(`${kind} ${f}${extra}`);
   function inspect(f, kind) {
-    const s = lst(f), link = s && s.isSymbolicLink(), small = s && !link && s.size <= LIM;
-    const nowT = !s ? '' : link ? 'LINK->' + readlinkSync(ap(f)) : small ? readB(f).toString('utf8') : '';
-    const oldT = existsSync(gp(f)) ? readFileSync(gp(f), 'utf8') : ''; const { add, rem } = lineDiff(oldT, nowT); const hits = scan(add.join('\n'));
-    if (link) hits.push(['HIGH', 'symbolic link']); if (s && !link && !small) hits.push(['MED', 'large file, not scanned']);
+    const s = lst(f), link = s && s.isSymbolicLink(), small = s && !link && s.size <= 8 * LIM;
+    const nowT = !s ? '' : link ? 'LINK->' + readlinkSync(ap(f)) : small ? txt(readB(f)) : '';
+    const oldT = existsSync(gp(f)) ? txt(readFileSync(gp(f))) : ''; const { add, rem } = lineDiff(oldT, nowT); const hits = scan(add.join('\n'));
+    if (link) hits.push(['HIGH', 'symbolic link']); if (s && !link && !small) hits.push(['MED', 'very large file (>4 MB), not scanned']);
     if (hits.some(h => h[0] === 'HIGH')) high = true;
     flag(kind, f, hits.length ? `  [${hits.map(h => h[0] + ': ' + h[1]).join('; ')}]` : '');
+    if (!add.length && !rem.length && s) out.push('    (no line-level change: only order/whitespace/encoding differs)');
     for (const l of add.slice(0, 6)) out.push('    + ' + l.slice(0, 140)); for (const l of rem.slice(0, 3)) out.push('    - ' + l.slice(0, 140));
   }
   for (const [f, h] of Object.entries(d.locked)) { if (!present(f)) { flag('MISSING', f); restorable.push(f); } else if (hashOf(f) !== h) { inspect(f, 'CHANGED'); restorable.push(f); } }
@@ -175,6 +188,11 @@ if (cmd === 'keygen') {
   }
   if (out.length) { logAdd('alert', out.filter(l => !l.startsWith('    ')).join(' | ').slice(0, 500)); console.log(`ALERT${high ? ' [HIGH RISK]' : ''}:\n` + out.join('\n')); process.exit(1); }
   logAdd('ok', 'clean'); console.log(`OK all protected files match the owner-signed baseline (${d.at}); log chain intact.`);
+} else if (cmd === 'anchor') { die('Log anchors are part of file-guard full (agensi.io).');
+} else if (cmd === 'anchor') { // send the log head hash OUT (Telegram etc.) once a day; check then fails if that hash ever disappears from the log
+  const L = logLines(); if (!L.length) die('No log yet.'); const h = JSON.parse(L.at(-1)).h, last = existsSync(P.anchors) ? readFileSync(P.anchors, 'utf8').trim().split('\n').at(-1) : '';
+  if (last && Date.now() - Date.parse(last.split(' ')[0]) < 20 * 3600e3 && A.force !== '1') { console.log('Anchor is recent; skipped.'); process.exit(0); }
+  appendFileSync(P.anchors, `${new Date().toISOString()} ${h}\n`); const sent = notify(`log anchor ${h.slice(0, 16)} (${L.length} entries)`); console.log(`OK anchor ${h.slice(0, 16)} saved${sent ? ' and sent to the owner channel' : ' (no notify channel: not sent out)'}.`);
 } else if (cmd === 'backup') {
   const m = JSON.parse(readFileSync(P.man, 'utf8')).data; const files = [...Object.keys(m.locked), ...Object.keys(m.append)].filter(present);
   const pack = { at: new Date().toISOString(), files: Object.fromEntries(files.map(f => [f, readB(f).toString('base64')])) };
@@ -196,5 +214,18 @@ if (cmd === 'keygen') {
   let bad = 0; for (const [n, r] of steps) { if (!r.ok) bad++; console.log((r.ok ? 'OK   ' : 'FAIL ') + n + ': ' + r.out.split('\n')[0]); }
   console.log(bad ? `\n${bad} step(s) failed.` : '\nAll good. Protection is active.'); if (bad) process.exit(1);} else if (cmd === 'backup-setup') { // seal a random backup passphrase with the OS and bind backups to this machine (auto does this too)
   seal(randomBytes(18).toString('base64url'), P.sealedB); if (A.bind === '1') writeFileSync(P.bind, '1'); logAdd('backup-setup', ''); console.log('OK backup passphrase sealed by the OS; add --bind 1 to also bind backups to this machine. Keep machine-id output somewhere safe for recovery on a new machine.');
+} else if (cmd === 'doctor') { // plain-language health report for the owner: what is on, what is missing, what to do next
+  const ok = (b, good, bad) => console.log((b ? '[OK]   ' : '[TODO] ') + (b ? good : bad));
+  const man = existsSync(P.man); ok(man, 'Baseline signed: your core files are watched.', 'No baseline yet. Run: install --dir <workspace>');
+  if (man) { const d = JSON.parse(readFileSync(P.man, 'utf8')).data; console.log(`       watching ${Object.keys(d.locked).length} locked, ${Object.keys(d.append).length} append-only, ${Object.keys(d.watch).length} other files (signed ${d.at.slice(0, 10)})`); }
+  ok(!!pinned(), 'Key fingerprint is pinned (a swapped key would be noticed).', 'Fingerprint not pinned: set FILEGUARD_PUBFP or run auto.');
+  const bk = existsSync(store) ? readdirSync(store).filter(x => x.endsWith('.fg')).sort() : []; const age = bk.length ? (Date.now() - Date.parse(bk.at(-1).slice(7, 17) + 'T00:00:00Z')) / 864e5 : 1e9;
+  ok(bk.length && age < 8, `Encrypted backup is recent (${bk.at(-1)}).`, bk.length ? 'Last backup is older than a week. Run: backup --dir <workspace>' : 'No backup yet. Run: backup --dir <workspace>');
+  const an = existsSync(P.anchors) ? readFileSync(P.anchors, 'utf8').trim().split('\n').at(-1) : ''; const aa = an ? (Date.now() - Date.parse(an.split(' ')[0])) / 864e5 : 1e9;
+  ok(aa < 3, 'Log anchor sent recently (log rewrites would be caught).', 'No recent log anchor. Needs the watchdog with a notify script, or run: anchor --dir <workspace> --notify <script>');
+  let wd = false; try { wd = process.platform === 'win32' ? execFileSync('schtasks', ['/Query', '/TN', 'FileGuard-' + basename(dir)], { stdio: 'pipe' }).length > 0 : /file-guard/.test(execFileSync('crontab', ['-l'], { stdio: 'pipe' }).toString()); } catch {}
+  ok(wd, 'Independent watchdog is scheduled (checks even when the agent is not running).', 'No watchdog found. Windows: scripts/watch.ps1 -Install. Linux/macOS: add a cron/launchd job running check.');
+  const cr = ['podman', 'docker'].some(c => { try { execFileSync(c, ['--version'], { stdio: 'pipe' }); return true; } catch { return false; } }); ok(cr, 'Container runtime found: detonate.mjs can test new scripts safely.', 'No podman/docker: new scripts can only be scanned as text, not run in a sandbox.');
+  console.log(logCheck(man ? JSON.parse(readFileSync(P.man, 'utf8')).data.logSeed : '') ? '[ALERT] The audit log was tampered with.' : '[OK]   Audit log chain is intact.');
 } else if (cmd === 'machine-id') { console.log(machineId());
-} else die('Usage: file-guard.mjs <install|auto|check|rebaseline|backup|restore-test|keygen|init> --dir <workspace> [--store dir] [--keyfile path] [--extra abs1,abs2] [--restore 1] [--pubfp fp] [--keep N] [--reason "..."] [--force 1] [--notify script] [--code N] [--bind 1] [--machine-id id]\nEnv: FILEGUARD_SIGNPASS (keygen/init: owner only), FILEGUARD_PASS (backups; auto mode seals one), FILEGUARD_NOTIFY (script that delivers approval codes), FILEGUARD_PUBFP (pinned key fingerprint).');
+} else die('Usage: file-guard.mjs <install|auto|check|rebaseline|anchor|backup|restore-test|keygen|init> --dir <workspace> [--store dir] [--keyfile path] [--extra abs1,abs2] [--restore 1] [--pubfp fp] [--keep N] [--reason "..."] [--force 1] [--notify script] [--code N] [--bind 1] [--machine-id id]\nEnv: FILEGUARD_SIGNPASS (keygen/init: owner only), FILEGUARD_PASS (backups; auto mode seals one), FILEGUARD_NOTIFY (script that delivers approval codes), FILEGUARD_PUBFP (pinned key fingerprint).');
