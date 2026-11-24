@@ -1,5 +1,7 @@
 # file-guard v3.5.0
 
+![file-guard](docs/thumbnail.png)
+
 Tamper detection for the files your AI agent trusts (SOUL / AGENTS / MEMORY / skills / hooks / config), plus a scanner that reads a skill BEFORE you install it. If something or someone quietly edits those files, file-guard notices, shows the diff, restores the clean copy and tells you.
 
 ## Install (one command, Node 18+, no dependencies)
