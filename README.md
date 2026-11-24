@@ -27,7 +27,7 @@ node scripts/file-guard.mjs check   --dir <your-agent-workspace>
 | `detonate`: run a new script in a network-less container with decoy secrets | no | yes |
 
 ## Want the full edition?
-**file-guard full v3.3 - $15 one-time on [agensi.io](https://agensi.io)** (search "file-guard"). Same install steps; on top of the free engine you get the scheduled watchdog (`watch`), `detonate` (run a new script in a network-less container and see what it tries to do) and all future v3.x fixes.
+**file-guard full v3.3.x - $15 one-time on [agensi.io](https://www.agensi.io/skills/file-guard-tamper-wall-for-ai-agents)**. Same install steps; on top of the free engine you get the scheduled watchdog (`watch`), `detonate` (run a new script in a network-less container and see what it tries to do) and all future v3.x fixes.
 
 ## Test report (24/11/2026)
 Run in a throw-away Linux container (Debian, Node 24, no network, WSL2 host) and on Windows 11 (Node 24). Every row below was actually run; nothing is assumed.
