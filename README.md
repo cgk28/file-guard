@@ -1,4 +1,4 @@
-# file-guard v3.2 (free edition)
+# file-guard v3.6.3 
 
 Tamper wall for AI agents: signed baseline of your agent's core files, content scan of changes, auto-restore with quarantine, tamper-evident log, encrypted backups. Zero dependencies, Node 18+.
 
