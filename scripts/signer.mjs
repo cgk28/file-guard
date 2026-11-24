@@ -92,7 +92,7 @@ async function tick() {
       const body = `Request to re-sign the file-guard baseline.\nReason given: "${reason}"\n${d.text}\nData fingerprint: ${d.hash}\n`;
       let ok;
       if (LOCAL) { // fail closed: the code goes only to the screen of this PC, never to Telegram
-        const shown = await localCode(`[file-guard] Approval code: ${code} (3 min, 3 tries). Reason: "${reason}". ${d.text.replace(/\n/g, ' | ')}`);
+                const shown = await localCode(`[file-guard] Approval code: ${code} (3 min). ${reason.slice(0, 50)} | ${d.hash} | ${d.text.replace(/\s+/g, ' ').slice(0, 110)}`); // msg.exe refuses long texts: keep it short
         if (!shown) { unlinkSync(sf(id)); out(id, 'err', 'could not show the code on this PC (msg.exe missing?); nothing signed'); continue; }
         ok = await send(body + 'Approval code: shown on the PC screen (not sent here). Give it to the agent ONLY if you asked for exactly this.');
       } else ok = await send(body + `Approval code: ${code} (3 min, 3 tries). Give it to the agent ONLY if you asked for exactly this.`);
