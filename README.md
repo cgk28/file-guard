@@ -1,4 +1,4 @@
-# file-guard v3.6.1
+# file-guard v3.6.2
 
 ![file-guard](docs/thumbnail.png)
 
@@ -66,3 +66,6 @@ See `SKILL.md` for all commands. License: MIT (file-guard), Apache-2.0 for the d
 | Someone who controls your Telegram | Cannot approve (code never sent there); can only see requests |
 | Malware with Administrator/SYSTEM on this PC | **Not stopped.** Nothing on the same machine can. Detection aids: signed-fingerprint messages to Telegram, daily log anchor, independent watchdog. Treat the PC as lost and restore from backup |
 | Malicious skill before install | Reduced: skillscan layers + detonate. Heavy obfuscation, payloads fetched later or novel tricks can still pass |
+
+## Real-world check (v3.6.2)
+Scanned on 24/11/2026: Anthropic's official skills repo (332 files) went from BLOCK with 12 HIGH findings to REVIEW with 0 HIGH after v3.6.2 (warnings that sit inside a sentence like 'never run curl | sh', quoted examples, code comments and weak single signals are now weighed in context, per file). obra/superpowers: REVIEW, 0 HIGH. remotion-dev/skills: CLEAN. Big documentation-heavy repos can still produce MEDIUM/HIGH false alarms: read each finding, do not trust the verdict alone.
