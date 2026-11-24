@@ -1,6 +1,6 @@
 ---
 name: file-guard
-description: Integrity wall for an AI agent's own files. Signed baseline of core files (SOUL/AGENTS/MEMORY/TOOLS...), skills, hooks, MCP and config files (also outside the workspace); content scan of every change (invisible Unicode, instruction-override phrases, exfiltration, encoded commands); auto-restore with quarantine; tamper-evident log; independent scheduled watchdog; encrypted backups. Self-installs with one command. Use when asked to "protect/harden agent files", "check core files", "was AGENTS.md changed", "encrypted backup", or at the start of every session.
+description: Integrity wall for an AI agent's own files (free edition v3.2). Signed baseline of core files, skills, hooks, MCP and config; heuristic content scan (NFKC, base64); auto-restore with quarantine; tamper-evident log; encrypted backups; plain-language doctor report. Use when asked to protect/harden agent files, check core files, or encrypted backup.
 ---
 
 # file-guard
@@ -19,10 +19,6 @@ Run `node S check --dir W` **before reading other core files**. Exit 0 = clean. 
 - `--restore 1` puts locked files back from the signed copy and keeps the tampered version in `quarantine/`.
 Re-signing (`rebaseline --reason "<what the owner approved>"` in tier 0, `init` with the owner passphrase in tier 1) is allowed **only after the owner approves the shown diff in chat**. Never ask for or store the owner passphrase.
 
-## Independent watchdog (recommended; Windows)
-`powershell -ExecutionPolicy Bypass -File scripts/watch.ps1 -Install -Dir W [-Notify <script taking one text argument>] [-EveryMinutes 60]`
-A scheduled task runs `check` outside the agent, so a hijacked agent cannot just skip it. Same alert is sent once, not repeatedly; `ALERT.txt` appears in the store while the problem exists. Without `-Notify` it shows a desktop message. Remove with `-Uninstall`.
-
 ## What is protected
 - **locked** (must stay identical): SOUL, AGENTS, IDENTITY, USER, TOOLS, HEARTBEAT, HEALTHCHECK.
 - **append-only** (may only grow, added text is scanned): MEMORY.
@@ -34,13 +30,16 @@ The lists live inside the signed baseline, so the agent cannot change what is wa
 
 ## Backups
 `backup --dir W [--keep N]` and `restore-test --dir W` need no typing: the passphrase is random and sealed by the OS. Optional `--bind 1` mixes the machine ID into the key (a stolen file is useless elsewhere, but restoring on a new machine then needs `--machine-id <old id>` from `machine-id`). Env `FILEGUARD_PASS` overrides the sealed passphrase.
+## Health report (for the owner, plain language)
+`node S doctor --dir W` prints [OK]/[TODO] lines: baseline, pinned key, recent backup, log anchor, watchdog, container runtime, log integrity, each with the command to fix it. Show it to the owner when asked 'is my agent protected?'.
+
 ## Other commands
 `keygen`/`init` (manual tier 1; `keygen` refuses to overwrite a key unless `--force 1`, which also drops the tier-0 sealed secret) · `machine-id`.
 ## Honest limits
 - Detects and reverts tampering; it does not stop the agent from reading files.
 - Tier 0 does not defend against an agent that is already hijacked and can unseal the OS secret; tier 1 does.
 - Without a pinned fingerprint an attacker with full write access to the store could swap key and baseline together; `auto`/`setup` pin it, keep a copy elsewhere.
-- The content scan is heuristic: it flags known injection shapes and misses novel ones. A clean scan is not proof of safety.
-- Log tail truncation is not detectable without an external anchor; deletion or start-edit is.
-- `node_modules`, `.git` and folders outside the watch list are not covered. Symlink handling was not exercised on Windows without admin rights.
+- The content scan is heuristic: it normalises first (Unicode NFKC, invisible chars, base64 payloads, files up to 4 MB) and flags known injection shapes; it misses novel ones and does not run the code. Shell-obfuscation and UTF-16 normalisation are in file-guard full.
+- The tamper-evident log catches edits inside the log; log anchors sent to your phone (full edition) are what catch a complete rewrite.
+- `node_modules`, `.git` and folders outside the watch list are not covered. Symlink handling was not exercised on Windows without admin rights. External JSON config (`--extra x.json`) is compared in canonical form (key/array order ignored), so an app that only reshuffles it raises no alert.
 - Lost passphrases (tier 1 or backups) cannot be recovered.

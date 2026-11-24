@@ -1,44 +1,35 @@
-# file-guard
+# file-guard v3.2 (free edition)
 
-![file-guard](docs/thumbnail.png)
+Tamper wall for AI agents: signed baseline of your agent's core files, content scan of changes, auto-restore with quarantine, tamper-evident log, encrypted backups. Zero dependencies, Node 18+.
 
-Tamper detection for the files your AI agent trusts (SOUL / AGENTS / MEMORY / skills / hooks / config). If something or someone quietly edits them, file-guard notices, shows the diff, restores the clean copy and tells you.
+## Quick start
+```
+node scripts/file-guard.mjs install --dir <your-agent-workspace>
+node scripts/file-guard.mjs check   --dir <your-agent-workspace>
+```
+`install` signs a baseline, runs a check, makes an encrypted backup and proves the restore works. Add `--restore 1` to `check` to put tampered files back (the bad copy goes to `quarantine/`). `doctor` prints a plain-language health report. Run with no arguments for all commands.
 
-## Install (one command, Node 18+, no dependencies)
+## What's new in v3.2 (vs v3.1)
+- Content scan now normalises Unicode (NFKC) and drops invisible/zero-width characters before matching.
+- Scans decoded base64 payloads, not just the raw text.
+- Bug fixes.
 
-    node scripts/file-guard.mjs install --dir <agent workspace> [--extra <config file outside the workspace>]
+## Free (v3.2) vs Full (v3.3)
+| | Free v3.2 | Full v3.3 |
+|---|---|---|
+| Signed baseline, check, auto-restore, quarantine | yes | yes |
+| Tamper-evident log, encrypted backups, restore drill, doctor | yes | yes |
+| Scan: NFKC + invisible chars + base64 | yes | yes |
+| Scan: shell obfuscation (`c${u}rl`, quotes, `^`), UTF-16 files | no | yes |
+| External JSON config compared in canonical form (no false alarms on reshuffle) | basic | yes |
+| `anchor`: daily log fingerprint sent to your phone (catches full log rewrite) | no | yes |
+| `watch`: scheduled background watchdog (Windows) | no | yes |
+| `detonate`: run a new script in a network-less container with decoy secrets | no | yes |
 
-It signs a baseline, runs a check, makes an encrypted backup and proves the restore works. Prints `All good` or the step that failed. Add `--watch 1` (Windows) for a scheduled background check (hourly and at logon, silent unless there is a problem; add `--notify <script>` to get alerts in your chat app).
+## Want the full edition?
+**file-guard full v3.3 - $15 one-time on [agensi.io](https://agensi.io)** (search "file-guard"). Same install steps; you get all scripts above and all future v3.x fixes.
 
-## Daily use
-- `check --dir W` at the start of every session (`install` adds this rule to your AGENTS.md). Add `--restore 1` to put locked files back.
-- After a change YOU approved: `rebaseline --dir W --reason "what changed"`.
-- `backup` / `restore-test`.
+## Limits (honest)
+Default mode keeps the signing secret sealed by the OS: it stops accidental and naive tampering, not a fully hijacked agent that can unseal it. The scan is heuristic and does not execute code. It detects, it does not prevent reads. Tested on Windows; macOS/Linux paths are written but less tested.
 
-## Features / Tính năng
-- **Signed baseline / Mốc chuẩn có chữ ký**: hashes and signs your agent's key files (SOUL, AGENTS, MEMORY, skills, hooks, config). / Băm và ký các file quan trọng của agent.
-- **Injection scan / Quét chèn lệnh**: flags prompt-injection and secret-exfiltration phrases in changed files. / Cảnh báo câu lệnh độc hại hoặc đòi gửi bí mật trong file bị sửa.
-- **Auto-restore / Tự khôi phục**: puts the clean copy back and keeps the tampered file as evidence. / Trả file sạch về, giữ file bị sửa làm bằng chứng.
-- **Encrypted backup / Sao lưu mã hóa**: signed, encrypted copy with a restore test. / Bản sao lưu mã hóa, có kiểm tra khôi phục.
-- **Background watch / Giám sát nền** (Windows): scheduled check, silent unless there is a problem. / Kiểm tra định kỳ, chỉ báo khi có vấn đề.
-- **Zero dependencies / Không cần cài thêm gì**: just Node 18+. / Chỉ cần Node 18+.
-
-## Giới thiệu (Tiếng Việt)
-file-guard là "bức tường chống sửa lén" cho các file mà AI agent của bạn tin tưởng (SOUL / AGENTS / MEMORY / skill / hook / cấu hình). Nếu có ai hoặc thứ gì âm thầm sửa chúng, file-guard phát hiện, cho xem phần khác biệt, khôi phục bản sạch và báo cho bạn.
-
-Cài một lệnh (Node 18+, không phụ thuộc thư viện nào):
-
-    node scripts/file-guard.mjs install --dir <thư mục workspace của agent>
-
-Dùng hằng ngày: chạy `check --dir W` đầu mỗi phiên; sau khi bạn tự duyệt một thay đổi, chạy `rebaseline --dir W --reason "đã đổi gì"`. Giới hạn: chế độ mặc định chặn sửa vô ý hoặc đơn giản, không chống được agent đã bị chiếm quyền hoàn toàn; muốn mạnh hơn dùng `scripts/setup.ps1 -Auto`. Đã thử trên Windows; macOS/Linux viết sẵn nhưng chưa thử.
-## Honest limits
-Default mode (tier 0) keeps the signing secret sealed by the OS: it stops accidental and naive tampering, not an agent that is fully hijacked and can unseal it. For that, use `scripts/setup.ps1 -Auto` (owner-held passphrase). The content scan is heuristic. It detects, it does not prevent reads. Tested on Windows; macOS/Linux paths are written but untested.
-
-See `SKILL.md` for all commands. License: MIT.
-
-## What it touches (for reviewers)
-Reads the files you list to hash them. Writes only its own store (default: per-user app-data folder, or --store). Stores one random secret of its own with DPAPI (Windows) or the keychain (macOS); it never reads other credentials. Network: none, except the optional notifier script YOU provide. Scanners may flag the keychain call: that is it.
-
-## Credits
-Made in Vietnam by CGK VIETNAM, together with AI assistant Chu. Copyright (c) 2026 CGK VIETNAM. MIT licensed.
-
+MIT licence, see LICENSE.
