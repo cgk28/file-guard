@@ -1,4 +1,4 @@
-# file-guard v3.5.0
+# file-guard v3.6.0
 
 ![file-guard](docs/thumbnail.png)
 
@@ -52,8 +52,17 @@ Reads the files you list to hash them. Writes only its own store (per-user app-d
 
 ## Limits (read before relying on it)
 - **Without the signer** the key is sealed by the OS for your own user: malware running as you could unseal it.
-- **With the signer** an attacker with Administrator or SYSTEM rights still wins, and whoever can read your Telegram can approve. If Telegram is down nobody can re-sign (checks still run).
-- **skillscan** is a text scan; **detonate** is a container, not a VM, and watches one run only. Evidence, not proof.
+- **With the signer** an attacker with Administrator or SYSTEM rights still wins, but (v3.6) the approval code is shown only on the PC screen, so whoever controls your Telegram cannot approve; they only see the request. If Telegram is down nobody can re-sign (checks still run).
+- **skillscan** (v3.6) = text rules + token-level structure scan + yara-lite + dependency checks (OSV with `--online`); it is still not a real syntax tree and each report lists what was not checked; **detonate** is a container, not a VM, and watches one run only. Evidence, not proof.
 - **Anchor**: leaves the machine only when a notify channel is configured.
 
 See `SKILL.md` for all commands. License: MIT (file-guard), Apache-2.0 for the derived rule tables (see NOTICE).
+
+## Threat model (v3.6)
+| Attacker | Stopped? |
+|---|---|
+| Agent or process running as your user edits core files | Detected, restored from signed copy |
+| Same, then tries to re-sign the baseline | No: key is held by a SYSTEM task, code appears only on your screen |
+| Someone who controls your Telegram | Cannot approve (code never sent there); can only see requests |
+| Malware with Administrator/SYSTEM on this PC | **Not stopped.** Nothing on the same machine can. Detection aids: signed-fingerprint messages to Telegram, daily log anchor, independent watchdog. Treat the PC as lost and restore from backup |
+| Malicious skill before install | Reduced: skillscan layers + detonate. Heavy obfuscation, payloads fetched later or novel tricks can still pass |
