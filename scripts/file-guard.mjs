@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const [cmd, ...rest] = process.argv.slice(2);
-const FG_VERSION = '3.5.0'; if (cmd === 'version' || cmd === '--version') { console.log('file-guard v' + FG_VERSION); process.exit(0); }
+const FG_VERSION = '3.6.0'; if (cmd === 'version' || cmd === '--version') { console.log('file-guard v' + FG_VERSION); process.exit(0); }
 if (cmd === 'skillscan') { // read a skill/repo BEFORE installing it; separate file, needs no workspace or key. Exit 0 clean, 1 review, 2 block.
   try { execFileSync(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), 'skillscan.mjs'), ...rest], { stdio: 'inherit' }); process.exit(0); } catch (e) { process.exit(e.status ?? 3); }
 }

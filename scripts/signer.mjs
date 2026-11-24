@@ -10,6 +10,7 @@
 import { createHash, generateKeyPairSync, createPrivateKey, sign, randomBytes, randomInt } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, appendFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { execFile } from 'node:child_process';
 
 const [cmd, ...rest] = process.argv.slice(2), A = {};
 for (let i = 0; i < rest.length; i += 2) A[rest[i].replace(/^--/, '')] = rest[i + 1];
@@ -17,7 +18,7 @@ const DIR = A.dir || join(process.env.ProgramData || 'C:\\ProgramData', 'FileGua
 const F = { key: join(DIR, 'key.pem'), pub: join(DIR, 'public.pem'), pin: join(DIR, 'pin.txt'), last: join(DIR, 'last.json'), notify: join(DIR, 'notify.json'), log: join(DIR, 'log.txt'), hb: join(DIR, 'heartbeat.txt'), ready: join(DIR, 'ready.flag'), inbox: join(DIR, 'inbox'), outbox: join(DIR, 'outbox'), state: join(DIR, 'state') };
 const sha = b => createHash('sha256').update(b).digest('hex');
 const log = m => { try { appendFileSync(F.log, new Date().toISOString() + ' ' + m + '\n'); } catch {} }; // never log codes or tokens
-const TTL = 10 * 60 * 1000, MAXTRY = 3, MAXREQ = 5, MINGAP = A.mingap ? +A.mingap : 20 * 1000, MAXBYTES = 4 * 1024 * 1024; // --mingap only for tests: the SYSTEM task is started without arguments
+const TTL = 3 * 60 * 1000, MAXTRY = 3, MAXREQ = 5, MINGAP = A.mingap ? +A.mingap : 20 * 1000, MAXBYTES = 4 * 1024 * 1024; // --mingap only for tests: the SYSTEM task is started without arguments
 
 if (cmd === 'keygen') {
   if (existsSync(F.key) && A.force !== '1') { console.error('REFUSED: a signer key already exists (use --force 1 to replace it).'); process.exit(1); }
@@ -59,6 +60,12 @@ async function send(text) {
   } catch (e) { log('telegram failed: ' + (e.name || 'error')); return false; }
 }
 
+// Code shown ON THIS PC (msg.exe to every logged-in session): Telegram never sees it, so whoever controls Telegram cannot approve.
+function localCode(text) {
+  if (A['test-local']) { appendFileSync(A['test-local'], text + '\n---\n'); return Promise.resolve(true); }
+  return new Promise(res => execFile(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'msg.exe'), ['*', '/TIME:600', text], { timeout: 15000 }, e => { if (e) log('msg.exe failed: ' + (e.code || 'error')); res(!e); }));
+}
+let LOCAL = true; try { LOCAL = JSON.parse(readFileSync(F.notify, 'utf8')).local !== false; } catch {}
 const okId = id => /^[a-f0-9]{16,32}$/.test(id);
 const sf = id => join(F.state, id + '.json');
 const out = (id, ext, body) => writeFileSync(join(F.outbox, id + '.' + ext), body);
@@ -82,7 +89,13 @@ async function tick() {
       writeFileSync(sf(id), JSON.stringify({ id, h: sha(code + salt), salt, exp: now + TTL, tries: 0, data: String(r.data), hash: d.hash }));
       lastReq = now;
       const reason = String(r.reason || '').replace(/\s+/g, ' ').slice(0, 200);
-      const ok = await send(`Request to re-sign the file-guard baseline.\nReason given: "${reason}"\n${d.text}\nData fingerprint: ${d.hash}\nApproval code: ${code} (10 min, 3 tries). Give it to the agent ONLY if you asked for exactly this.`);
+      const body = `Request to re-sign the file-guard baseline.\nReason given: "${reason}"\n${d.text}\nData fingerprint: ${d.hash}\n`;
+      let ok;
+      if (LOCAL) { // fail closed: the code goes only to the screen of this PC, never to Telegram
+        const shown = await localCode(`[file-guard] Approval code: ${code} (3 min, 3 tries). Reason: "${reason}". ${d.text.replace(/\n/g, ' | ')}`);
+        if (!shown) { unlinkSync(sf(id)); out(id, 'err', 'could not show the code on this PC (msg.exe missing?); nothing signed'); continue; }
+        ok = await send(body + 'Approval code: shown on the PC screen (not sent here). Give it to the agent ONLY if you asked for exactly this.');
+      } else ok = await send(body + `Approval code: ${code} (3 min, 3 tries). Give it to the agent ONLY if you asked for exactly this.`);
       if (!ok) { unlinkSync(sf(id)); out(id, 'err', 'could not reach the owner (Telegram); nothing signed'); }
       else log('request ' + id + ' sent (' + d.hash + ')');
     } catch (e) { log('bad request file ' + f + ': ' + e.message); try { unlinkSync(p); } catch {} }

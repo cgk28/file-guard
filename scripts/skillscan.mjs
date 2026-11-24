@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { deepFile, parseDeps, osvCheck, realYara } from './deepscan.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2), flag = n => argv.includes('--' + n), target = argv.find(a => !a.startsWith('--'));
@@ -30,7 +31,7 @@ const OWN = [
   { id: 'C2', fam: 'Prompt Injection', kind: 'any', w: 0.85, neg: 1, rx: /\b(?:keep|hide|conceal|mask|disguise)\b[^\n]{0,40}\b(?:from|to)\s+(?:the\s+)?(?:\w+\s+){0,3}(?:user|owner|human|operator|person you work for|person you serve)\b|\b(?:secretly|covertly|silently|quietly)\b[^\n]{0,30}\b(?:send|upload|post|exfiltrate|execute|install)\b|\bwithout\s+(?:the\s+)?(?:user|owner|them|anyone)\s+(?:knowing|noticing|seeing|realizing)\b/i, why: 'asks the agent to do something and hide it from the person it works for' },
   { id: 'X2', fam: 'Data Exfiltration', kind: 'any', w: 0.9, rx: /!\[[^\]]*\]\(\s*https?:\/\/[^)\s]*(?:\{[^}]*\}|%7B|\$\{|<[^>]+>|\[[A-Za-z_]+\])[^)]*\)|<img\b[^>]*\bsrc\s*=\s*["']https?:\/\/[^"']*(?:\{[^}]*\}|%7B|\$\{)[^"']*["']/i, why: 'a markdown image whose address carries conversation data: when it renders, the data is sent out' },
   { id: 'X3', fam: 'Data Exfiltration', kind: 'any', w: 0.9, rx: /\b(?:send|upload|post|email|forward|transmit|submit|copy)\b[^\n]{0,60}\b(?:contents?|files?|data|history|conversation|home directory|documents?|secrets?|keys?|credentials?|\.env)\b[^\n]{0,60}\b(?:to|at|into)\s+(?:https?:\/\/|ftp:\/\/|[\w.-]+@[\w.-]+)/i, neg: 1, why: 'tells the agent to send files or data to an outside address' },
-  { id: 'M4', fam: 'Memory Poisoning', kind: 'prose', w: 0.8, rx: /(\b[\w'’-]{2,20}\b[ \t,.;]{0,3}?)\1{25,}/, why: 'the same words repeated dozens of times, a way to push the real instructions out of the agent\'s context' },
+  { id: 'M4', fam: 'Memory Poisoning', kind: 'prose', w: 0.8, rx: /(\b[\w'Ã¢â‚¬â„¢-]{2,20}\b[ \t,.;]{0,3}?)\1{25,}/, why: 'the same words repeated dozens of times, a way to push the real instructions out of the agent\'s context' },
   { id: 'M3', fam: 'Excessive Agency', kind: 'any', w: 0.85, rx: /\b(?:never|do not|don't|without)\s+(?:ever\s+)?(?:ask|asking|wait|waiting|check|checking)\b[^\n]{0,30}\b(?:user|owner|human|operator|me)\b[^\n]{0,30}\b(?:approval|permission|confirmation|consent|first)\b|\balways trust\b[^\n]{0,40}\b(?:skill|file|source|script|tool|instructions?)\b/i, why: 'tells the agent to act without the owner\'s approval' },
 ];
 // one file that both READS something private and SENDS data out is worse than either alone (a cheap version of taint tracking)
@@ -94,7 +95,7 @@ function judge(rule, line, idx, inFence, fileKind) {
   // returns [factor, note]; factor 1 = full weight
   let f = 1, notes = [];
   const before = line.slice(Math.max(0, idx - 60), idx);
-  const inQuote = (line.slice(0, idx).match(/[`"“”‘’']/g) || []).length % 2 === 1;
+  const inQuote = (line.slice(0, idx).match(/[`"Ã¢â‚¬Å“Ã¢â‚¬ÂÃ¢â‚¬ËœÃ¢â‚¬â„¢']/g) || []).length % 2 === 1;
   if ((rule.neg || /^(?:EA2|M2|M3)$/.test(rule.id)) && !CONCEAL.test(line)) { if (NEG_BEFORE.test(before)) { f *= 0.1; notes.push('negated, as in a warning'); } else if (inQuote) { f *= 0.3; notes.push('quoted as an example'); } }
   if (fileKind === 'prose' && !inFence && /^(?:PE3|E[1-5]|AS\d|SC1)$/.test(rule.id)) { // credential/exfil wording in prose counts only when somebody is told to DO something with a secret
     if (!(ACTION.test(line) && SECRETISH.test(line))) { f *= 0.2; notes.push('mentions a secret but no one is told to read or send it'); }
@@ -136,7 +137,7 @@ function scanText(rel, text, kind) {
 
 // ---------- main ----------
 const { root, only, cleanup } = await resolveInput(target).catch(e => { console.error('skillscan: ' + e.message); process.exit(3); });
-const files = (only ? [{ f: only, size: statSync(only).size }] : walk(root)), byHash = new Map(), findings = [], extra = [], skipped = [];
+const files = (only ? [{ f: only, size: statSync(only).size }] : walk(root)), byHash = new Map(), findings = [], extra = [], skipped = [], allDeps = [];
 for (const e of files) {
   const rel = relative(root, e.f).replace(/\\/g, '/') || basename(e.f);
   if (e.link) { findings.push({ file: rel, line: 0, id: 'L1', fam: 'Hidden Content', score: 0.7, text: 'symbolic link', why: 'a link can point outside the skill folder', notes: [] }); continue; }
@@ -150,8 +151,12 @@ for (const e of files) {
   if (basename(rel) === 'package.json') { try { const pj = JSON.parse(t); for (const s of ['preinstall', 'install', 'postinstall', 'prepare']) if (pj.scripts?.[s]) findings.push({ file: rel, line: 0, id: 'K1', fam: 'Package Hooks', score: /curl|wget|iwr|http|node\s+-e|powershell|eval|base64/i.test(pj.scripts[s]) ? 0.9 : 0.5, text: `scripts.${s}: ${String(pj.scripts[s]).slice(0, 80)}`, why: FAMS['Package Hooks'], notes: [] }); } catch {} }
   if (LEGAL.test(rel)) continue; // licence text is not an instruction
   const fs_ = scanText(rel, t, kind === 'data' ? 'code' : kind); findings.push(...fs_);
+  findings.push(...deepFile(rel, t, kind === 'code')); if (/^(?:package\.json|requirements[\w.-]*\.txt)$/i.test(basename(rel))) { const pd = parseDeps(rel, t); findings.push(...pd.findings); allDeps.push(...pd.deps); }
   { const codeText = fs_.codeText || ''; const sl = codeText.split(/\r?\n/).findIndex(l => SENSITIVE.test(l)), nl = codeText.split(/\r?\n/).findIndex(l => SENDS.test(l)); if (sl >= 0 && nl >= 0) findings.push({ file: rel, line: nl + 1, id: 'C1', fam: 'Data Exfiltration', score: 0.95, text: 'reads a private file/secret (line ' + (sl + 1) + ') and sends data out (line ' + (nl + 1) + ')', why: 'the same script collects private data and sends it over the network', notes: [] }); }
 }
+const cov = { structure: 'js/py token-level', yaraLite: true, deps: allDeps.length + ' declared', osv: 'not asked (add --online)', yara: 'not asked (add --yara <rules.yar>)' };
+if (flag('online')) { const o = await osvCheck(allDeps); findings.push(...o.findings); cov.osv = o.ran ? `asked about ${o.asked} pinned package(s)` : `FAILED (${o.error})`; }
+const yi = argv.indexOf('--yara'); if (yi >= 0 && argv[yi + 1]) { const y = realYara(root, resolve(argv[yi + 1])); findings.push(...y.findings); cov.yara = y.ran ? 'real YARA ran' : 'yara program not found or failed'; }
 cleanup();
 
 // ---------- allow-list (given on the command line, never read from the folder being scanned) ----------
@@ -181,7 +186,7 @@ if (flag('with-skillspector')) { const r = spawnSync('skillspector', ['scan', ro
 let det = null;
 if (flag('detonate')) { const dt = join(HERE, 'detonate.mjs'); if (existsSync(dt)) { const r = spawnSync(process.execPath, [dt, root], { encoding: 'utf8', timeout: 240000 }); det = (r.stdout || r.stderr || '').trim().split('\n').slice(-12).join('\n'); } else det = 'detonate.mjs not found next to skillscan'; }
 
-if (flag('json')) { console.log(JSON.stringify({ verdict, scanned: byHash.size, duplicatesSkipped: dupNote, skipped, findings: G.map(g => ({ severity: sev(g.score), score: +g.score.toFixed(2), rule: g.id, family: g.fam, file: g.file, lines: g.lines, count: g.count, text: g.text, why: g.why, notes: g.notes, decoded: g.how || undefined })), skillspector: ss, detonate: det }, null, 1)); process.exit(verdict === 'BLOCK' ? 2 : verdict === 'REVIEW' ? 1 : 0); }
+if (flag('json')) { console.log(JSON.stringify({ verdict, scanned: byHash.size, duplicatesSkipped: dupNote, skipped, findings: G.map(g => ({ severity: sev(g.score), score: +g.score.toFixed(2), rule: g.id, family: g.fam, file: g.file, lines: g.lines, count: g.count, text: g.text, why: g.why, notes: g.notes, decoded: g.how || undefined })), skillspector: ss, detonate: det, coverage: cov }, null, 1)); process.exit(verdict === 'BLOCK' ? 2 : verdict === 'REVIEW' ? 1 : 0); }
 
 const ICON = { BLOCK: 'BLOCK  - do not install', REVIEW: 'REVIEW - read the findings first', CLEAN: 'CLEAN  - nothing that looks harmful' };
 console.log(`skillscan: ${ICON[verdict]}`);
@@ -196,5 +201,6 @@ for (const g of show) {
 if (hidden > 0) console.log(`\n${hidden} minor note(s) hidden (use --all).`);
 if (ss) console.log(`\nSkillSpector on the same folder: ${ss.ran ? `${ss.critical} CRITICAL, ${ss.high} HIGH, ${ss.medium} MEDIUM${ss.reco ? ' - ' + ss.reco : ''}` : 'not installed or failed'}`);
 if (det) console.log('\nDetonation (script run in a sealed container):\n' + det);
-console.log('\nThis is a text scan, not proof: a CLEAN verdict does not make a skill safe. Use --detonate for scripts.');
+console.log(`\nChecked: text rules, structure scan (${cov.structure}), yara-lite signatures, dependencies (${cov.deps}), OSV: ${cov.osv}, real YARA: ${cov.yara}.`);
+console.log('NOT checked: real syntax trees, code that only exists after download, obfuscation beyond string pieces/escapes/base64, native binaries beyond a flag. CLEAN is not proof of safety. Use --detonate for scripts.');
 process.exit(verdict === 'BLOCK' ? 2 : verdict === 'REVIEW' ? 1 : 0);

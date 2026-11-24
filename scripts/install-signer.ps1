@@ -1,4 +1,4 @@
-<#
+﻿<#
  file-guard signer installer (Windows). Run ELEVATED (Administrator). It:
    1. creates C:\ProgramData\FileGuard\signer with admin-only rights on the key and the Telegram settings,
    2. copies signer.mjs (and, if node lives in a user-writable folder, node.exe) INTO that folder, so nothing the
@@ -10,7 +10,7 @@
          powershell -ExecutionPolicy Bypass -File install-signer.ps1 -Uninstall
  Result and errors are written to C:\ProgramData\FileGuard\signer\install.log (readable by everyone, never holds secrets).
 #>
-param([string]$Chat = $env:FILEGUARD_TG_CHAT, [string]$TelegramFile = $env:FILEGUARD_TG_FILE, [string]$ScriptDir = $PSScriptRoot, [string]$NodePath = '', [switch]$Uninstall, [switch]$NoPause)
+param([string]$Chat = $env:FILEGUARD_TG_CHAT, [string]$TelegramFile = $env:FILEGUARD_TG_FILE, [string]$ScriptDir = $PSScriptRoot, [string]$NodePath = '', [switch]$Uninstall, [switch]$TelegramCode, [switch]$NoPause)
 $ErrorActionPreference = 'Stop'
 $Dir = Join-Path $env:ProgramData 'FileGuard\signer'
 $LogFile = Join-Path $Dir 'install.log'
@@ -47,7 +47,7 @@ try {
   if (-not (Test-Path $TelegramFile)) { throw "Telegram token file not found: $TelegramFile" }
   $tok = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR((Get-Content $TelegramFile | ConvertTo-SecureString)))
   if (-not $tok -or $tok.Length -lt 20) { throw 'Telegram token could not be read' }
-  [IO.File]::WriteAllText("$Dir\notify.json", (@{ token = $tok; chat = $Chat } | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding $false)); $tok = $null
+  [IO.File]::WriteAllText("$Dir\notify.json", (@{ token = $tok; chat = $Chat; local = (-not $TelegramCode) } | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding $false)); $tok = $null
   icacls "$Dir\notify.json" /inheritance:r /grant:r 'SYSTEM:F' 'BUILTIN\Administrators:F' | Out-Null
   Log 'telegram settings stored (admin-only)'
   # 5. the task
