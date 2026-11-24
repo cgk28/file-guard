@@ -1,0 +1,22 @@
+{
+    "note":  "Data for detonate.mjs: what counts as a sensitive path, and the FAKE decoy files placed in the sandbox home.",
+    "sens":  "(\\.env|\\.ssh|id_rsa|id_ed25519|\\.aws|credentials|\\.npmrc|\\.netrc|\\.git-credentials|\\.gitconfig|\\.kube|\\.docker|hosts\\.yml|Login Data|Cookies|wallet|passwd|shadow|\\.gnupg|secret|token)",
+    "decoys":  [
+                   {
+                       "text":  "API_KEY=FG-CANARY-0001\n",
+                       "path":  ".env"
+                   },
+                   {
+                       "text":  "-----BEGIN FAKE KEY FG-CANARY-0002-----\n",
+                       "path":  ".ssh/id_rsa"
+                   },
+                   {
+                       "text":  "[default]\naws_secret_access_key=FG-CANARY-0003\n",
+                       "path":  ".aws/credentials"
+                   }
+               ],
+    "env":  {
+                "GITHUB_TOKEN":  "FG-CANARY-0004",
+                "OPENAI_API_KEY":  "FG-CANARY-0005"
+            }
+}

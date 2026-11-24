@@ -10,6 +10,10 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const [cmd, ...rest] = process.argv.slice(2);
+const FG_VERSION = '3.5.0'; if (cmd === 'version' || cmd === '--version') { console.log('file-guard v' + FG_VERSION); process.exit(0); }
+if (cmd === 'skillscan') { // read a skill/repo BEFORE installing it; separate file, needs no workspace or key. Exit 0 clean, 1 review, 2 block.
+  try { execFileSync(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), 'skillscan.mjs'), ...rest], { stdio: 'inherit' }); process.exit(0); } catch (e) { process.exit(e.status ?? 3); }
+}
 const A = {}; for (let i = 0; i < rest.length; i += 2) A[rest[i].replace(/^--/, '')] = rest[i + 1];
 const dir = resolve(A.dir || '.');
 const list = (v, d) => (v ?? d).split(',').map(s => s.trim()).filter(Boolean);
@@ -68,13 +72,13 @@ const RULES = [
 ];
 // Normalise before scanning (scanners are beaten by packing/obfuscation): NFKC, drop invisible chars, strip shell-obfuscation (c${u}rl, quotes, ^, `), join "a"+"b", and also scan decoded base64 payloads.
 function variants(t) {
-  const v = [t], n = t.normalize('NFKC').replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]|[\u{E0000}-\u{E007F}]/gu, '');
+  const v = [t], n = t.normalize('NFKC').replace(/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]|[\u{E0000}-\u{E007F}]/gu, '').replace(/\$\{[^}]*\}|\$IFS|\$[@*0-9]|\$\(\)|[`'"\\^]/g, '');
   if (n !== t) v.push(n);
   for (const m of t.matchAll(/[A-Za-z0-9+/]{24,}={0,2}/g)) { try { const d = Buffer.from(m[0], 'base64').toString('utf8'); if (/^[\t\r\n\x20-\x7e]{12,}$/.test(d)) v.push(d); } catch {} }
   return v;
 }
 // UTF-16 (PowerShell's default >) would otherwise hide text from every pattern: decode by BOM, else drop NULs.
-const txt = b => b.toString('utf8').replace(/\0/g, '');
+const txt = b => (b[0] === 0xFF && b[1] === 0xFE ? b.subarray(2).toString('utf16le') : b[0] === 0xFE && b[1] === 0xFF ? Buffer.from(b.subarray(2)).swap16().toString('utf16le') : b.toString('utf8').replace(/\0/g, ''));
 const scan = t => { const seen = new Set(), out = []; variants(t).forEach((x, i) => RULES.forEach(([re, s, w]) => { if (re.test(x) && !seen.has(w)) { seen.add(w); out.push([s, i ? w + ' (after decoding/deobfuscation)' : w]); } })); return out; };
 function lineDiff(oldT, newT) { const o = new Map(); for (const l of oldT.split(/\r?\n/)) o.set(l, (o.get(l) || 0) + 1); const add = [], c = new Map(o); for (const l of newT.split(/\r?\n/)) { if (c.get(l) > 0) c.set(l, c.get(l) - 1); else add.push(l); } const rem = []; for (const [l, n] of c) for (let i = 0; i < n; i++) rem.push(l); return { add, rem }; }
 
@@ -101,10 +105,35 @@ const backupPass = () => process.env.FILEGUARD_PASS || (existsSync(P.sealedB) ? 
 
 // ---- key + baseline ----
 const fpOf = pem => sha(pem).slice(0, 16);
-function pinned() { return A.pubfp || (existsSync(P.pin) ? readFileSync(P.pin, 'utf8').trim() : '') || process.env.FILEGUARD_PUBFP || ''; }
+// Signer mode (v3.5): the signing key lives in an admin-only folder and a SYSTEM task signs after a one-time code. The folder is fixed ON PURPOSE:
+// no env/flag override, otherwise malware could point check at a signer of its own.
+const SG = join(process.env.ProgramData || 'C:\\ProgramData', 'FileGuard', 'signer'); /*SG*/
+const brokerOn = () => existsSync(join(SG, 'ready.flag'));
+function brokerSign(data) {
+  const reason = A.reason || die('Give --reason "what you asked for / the owner approved".');
+  const IN = join(SG, 'inbox'), OUT = join(SG, 'outbox'), pend = join(store, 'broker-pending.json'), sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  const str = JSON.stringify(data);
+  const waitFor = (id, ms) => { for (let t = 0; t < ms; t += 400) { for (const e of ['sig', 'err']) { const f = join(OUT, id + '.' + e); if (existsSync(f)) { const v = readFileSync(f, 'utf8'); try { unlinkSync(f); } catch {} return [e, v]; } } sleep(400); } return null; };
+  if (!A.code) {
+    const id = randomBytes(12).toString('hex');
+    writeFileSync(join(IN, id + '.req.json'), JSON.stringify({ id, reason, data: str })); writeFileSync(pend, JSON.stringify({ id, reason, data: str }));
+    const r = waitFor(id, 6000); if (r && r[0] === 'err') die('Signer refused: ' + r[1], 1);
+    logAdd('signer-request', reason); die('A one-time code was sent to the owner (Telegram) by the signer, with a summary of what will be signed. Re-run the same command with --code <code> within 10 minutes.', 3);
+  }
+  const p = existsSync(pend) ? JSON.parse(readFileSync(pend, 'utf8')) : die('No pending request. Run the command without --code first.', 1);
+  if (p.reason !== reason) die('--reason must be the same as in the request.', 1);
+  const was = JSON.parse(p.data), cur = JSON.parse(str); cur.at = was.at;
+  if (JSON.stringify(cur) !== p.data) { unlinkSync(pend); die('Files changed since the request (the owner approved a different list). Ask again.', 1); }
+  writeFileSync(join(IN, p.id + '.code'), JSON.stringify({ code: String(A.code) }));
+  const r = waitFor(p.id, 30000); if (!r) die('The signer did not answer (is the FileGuard-Signer task running?).', 1);
+  if (r[0] === 'err') { unlinkSync(pend); die('Signer: ' + r[1], 1); }
+  unlinkSync(pend); return { data: was, sig: r[1].trim() };
+}
+function pinned() { if (brokerOn()) return readFileSync(join(SG, 'pin.txt'), 'utf8').trim(); return A.pubfp || (existsSync(P.pin) ? readFileSync(P.pin, 'utf8').trim() : '') || process.env.FILEGUARD_PUBFP || ''; }
 function pubKey() {
-  if (!existsSync(P.pub)) die('No public key. Run keygen (or auto) first.');
-  const pem = readFileSync(P.pub, 'utf8'), fp = fpOf(pem), pin = pinned();
+  const pubFile = brokerOn() ? join(SG, 'public.pem') : P.pub;
+  if (!existsSync(pubFile)) die('No public key. Run keygen (or auto) first.');
+  const pem = readFileSync(pubFile, 'utf8'), fp = fpOf(pem), pin = pinned();
   if (pin && pin !== fp) { console.log(`ALERT: public key fingerprint ${fp} does not match pinned ${pin} (key swapped?).`); process.exit(1); }
   return createPublicKey(pem);
 }
@@ -117,7 +146,7 @@ function doKeygen() {
   logAdd('keygen', fpOf(pem)); return fpOf(pem);
 }
 function doInit() {
-  const priv = createPrivateKey(dec(readFileSync(keyFile), env('FILEGUARD_SIGNPASS'), 'FK1').toString());
+  const priv = brokerOn() ? null : createPrivateKey(dec(readFileSync(keyFile), env('FILEGUARD_SIGNPASS'), 'FK1').toString());
   const pv = prevCfg(), j = x => (x ? x.join(',') : undefined);
   const cfg = { locked: list(A.locked, j(pv.locked) ?? DEF.locked), append: list(A.append, j(pv.append) ?? DEF.append), watch: list(A.watch, j(pv.watch) ?? DEF.watch), extra: list(A.extra, j(pv.extra) ?? '').map(p => resolve(p)), notify: A.notify || pv.notify || '', approve: A.approve === '1' ? true : (A.approve === '0' ? false : !!pv.approve) };
   if (!logLines().length) logAdd('init-start', '');
@@ -128,7 +157,8 @@ function doInit() {
   const all = [...Object.keys(data.locked), ...Object.keys(data.append), ...Object.keys(data.watch)];
   if (!all.length) die('No files found to protect in ' + dir);
   for (const f of all) { const s = lst(f); if (s && !s.isSymbolicLink() && s.size <= LIM) { mkdirSync(dirname(gp(f)), { recursive: true }); copyFileSync(ap(f), gp(f)); } }
-  writeFileSync(P.man, JSON.stringify({ data, sig: sign(null, Buffer.from(JSON.stringify(data)), priv).toString('base64') }, null, 2));
+  const signed = brokerOn() ? brokerSign(data) : { data, sig: sign(null, Buffer.from(JSON.stringify(data)), priv).toString('base64') };
+  writeFileSync(P.man, JSON.stringify(signed, null, 2));
   logAdd('init', `${all.length} files` + (A.reason ? ` reason=${A.reason}` : ''));
   console.log(`OK baseline signed: ${Object.keys(data.locked).length} locked, ${Object.keys(data.append).length} append-only, ${Object.keys(data.watch).length} watched.`);
 }
@@ -140,6 +170,7 @@ function approve(reason) { // out-of-band approval: code goes to the owner's cha
     notify(`Re-sign request: "${reason}". Approval code: ${code} (valid 10 min). Give it to the agent ONLY if YOU asked for this change.`); logAdd('approval-requested', reason); die('Approval code sent to the owner on the notify channel. Re-run with --code <code>.', 3); }
   const p = existsSync(P.pend) ? JSON.parse(readFileSync(P.pend, 'utf8')) : null; if (!p || Date.now() > p.exp || sha(A.code + p.salt) !== p.h || p.reason !== reason) die('Wrong, expired or mismatched code.', 1); unlinkSync(P.pend);
 }
+if (brokerOn() && (cmd === 'keygen' || cmd === 'auto')) die('The signer is installed (' + SG + '): the key is not kept here. Use `rebaseline --reason "..."` (a code goes to the owner).', 1);
 if (cmd === 'keygen') {
   const fp = doKeygen(); console.log(`OK keypair created.\n  public key  : ${P.pub}\n  private key : ${keyFile} (encrypted with FILEGUARD_SIGNPASS; move it OFF this machine / away from the agent)\n  PIN THIS FINGERPRINT outside the workspace: ${fp}  (env FILEGUARD_PUBFP)`);
 } else if (cmd === 'init') { doInit();
@@ -151,11 +182,11 @@ if (cmd === 'keygen') {
   if (!existsSync(P.sealedB)) seal(randomBytes(18).toString('base64url'), P.sealedB); if (A.bind === '1') writeFileSync(P.bind, '1'); // backups: sealed passphrase; machine binding only with --bind 1
   const fp = doKeygen(); writeFileSync(P.pin, fp); doInit();
   if (process.platform === 'win32' && !process.env.FILEGUARD_PUBFP) try { ps('[Environment]::SetEnvironmentVariable("FILEGUARD_PUBFP",$env:FG_P,"User")', { FG_P: fp }); } catch {}
-  console.log(`OK tier-0 protection active. Fingerprint ${fp}. Passphrase sealed by the OS (not shown).\nFor stronger protection against a hijacked agent, run setup.ps1 -Auto once (owner holds the passphrase).`);
+  console.log(`OK tier-0 protection active. Fingerprint ${fp}. Passphrase sealed by the OS (not shown).\nFor protection against malware running as your user, run scripts/install-signer.ps1 once as Administrator (Windows).`);
 } else if (cmd === 'rebaseline') { // re-sign after the OWNER approved the changes in chat (tier 0 only)
   if (!A.reason) die('Give --reason "what the owner approved".');
-  approve(A.reason);
-  process.env.FILEGUARD_SIGNPASS = unseal(); doInit();
+  if (brokerOn()) doInit(); else { approve(A.reason);
+  process.env.FILEGUARD_SIGNPASS = unseal(); doInit(); }
 } else if (cmd === 'check') {
   const m = existsSync(P.man) ? JSON.parse(readFileSync(P.man, 'utf8')) : die('No baseline. Run auto (or keygen + init) first.'); const d = m.data;
   if (!verify(null, Buffer.from(JSON.stringify(d)), pubKey(), Buffer.from(m.sig, 'base64'))) { console.log('ALERT: baseline signature INVALID (baseline altered or not signed by the owner key).'); process.exit(1); }
@@ -188,7 +219,6 @@ if (cmd === 'keygen') {
   }
   if (out.length) { logAdd('alert', out.filter(l => !l.startsWith('    ')).join(' | ').slice(0, 500)); console.log(`ALERT${high ? ' [HIGH RISK]' : ''}:\n` + out.join('\n')); process.exit(1); }
   logAdd('ok', 'clean'); console.log(`OK all protected files match the owner-signed baseline (${d.at}); log chain intact.`);
-} else if (cmd === 'anchor') { die('Log anchors are part of file-guard full (agensi.io).');
 } else if (cmd === 'anchor') { // send the log head hash OUT (Telegram etc.) once a day; check then fails if that hash ever disappears from the log
   const L = logLines(); if (!L.length) die('No log yet.'); const h = JSON.parse(L.at(-1)).h, last = existsSync(P.anchors) ? readFileSync(P.anchors, 'utf8').trim().split('\n').at(-1) : '';
   if (last && Date.now() - Date.parse(last.split(' ')[0]) < 20 * 3600e3 && A.force !== '1') { console.log('Anchor is recent; skipped.'); process.exit(0); }
@@ -222,10 +252,13 @@ if (cmd === 'keygen') {
   const bk = existsSync(store) ? readdirSync(store).filter(x => x.endsWith('.fg')).sort() : []; const age = bk.length ? (Date.now() - Date.parse(bk.at(-1).slice(7, 17) + 'T00:00:00Z')) / 864e5 : 1e9;
   ok(bk.length && age < 8, `Encrypted backup is recent (${bk.at(-1)}).`, bk.length ? 'Last backup is older than a week. Run: backup --dir <workspace>' : 'No backup yet. Run: backup --dir <workspace>');
   const an = existsSync(P.anchors) ? readFileSync(P.anchors, 'utf8').trim().split('\n').at(-1) : ''; const aa = an ? (Date.now() - Date.parse(an.split(' ')[0])) / 864e5 : 1e9;
+  ok(brokerOn(), 'Signing key is held by the SYSTEM signer (your account cannot read it; re-signing needs a code on your phone).', 'Signing secret is sealed by the OS for YOUR account: malware running as you could unseal it. On Windows run scripts/install-signer.ps1 once as Administrator (key moves where your account cannot read it).');
+  let nf = !!(A.notify || process.env.FILEGUARD_NOTIFY || prevCfg().notify); if (!nf && process.platform === 'win32') try { { const xml = execFileSync('schtasks', ['/Query', '/TN', 'FileGuard-' + basename(dir), '/XML'], { stdio: 'pipe' }).toString(), cmdp = (xml.match(/<Command>([^<]+)</) || [])[1]; nf = /-Notify/i.test(xml) || (!!cmdp && /-Notify/i.test(readFileSync(cmdp.trim(), 'utf8'))); } } catch {}
+  ok(nf, 'Notify channel set (anchors leave this machine).', 'No notify channel: anchors stay on this machine and a full log rewrite is not detectable. Also keep the notify script itself out of the agent\'s write reach.');
   ok(aa < 3, 'Log anchor sent recently (log rewrites would be caught).', 'No recent log anchor. Needs the watchdog with a notify script, or run: anchor --dir <workspace> --notify <script>');
   let wd = false; try { wd = process.platform === 'win32' ? execFileSync('schtasks', ['/Query', '/TN', 'FileGuard-' + basename(dir)], { stdio: 'pipe' }).length > 0 : /file-guard/.test(execFileSync('crontab', ['-l'], { stdio: 'pipe' }).toString()); } catch {}
   ok(wd, 'Independent watchdog is scheduled (checks even when the agent is not running).', 'No watchdog found. Windows: scripts/watch.ps1 -Install. Linux/macOS: add a cron/launchd job running check.');
   const cr = ['podman', 'docker'].some(c => { try { execFileSync(c, ['--version'], { stdio: 'pipe' }); return true; } catch { return false; } }); ok(cr, 'Container runtime found: detonate.mjs can test new scripts safely.', 'No podman/docker: new scripts can only be scanned as text, not run in a sandbox.');
   console.log(logCheck(man ? JSON.parse(readFileSync(P.man, 'utf8')).data.logSeed : '') ? '[ALERT] The audit log was tampered with.' : '[OK]   Audit log chain is intact.');
 } else if (cmd === 'machine-id') { console.log(machineId());
-} else die('Usage: file-guard.mjs <install|auto|check|rebaseline|anchor|backup|restore-test|keygen|init> --dir <workspace> [--store dir] [--keyfile path] [--extra abs1,abs2] [--restore 1] [--pubfp fp] [--keep N] [--reason "..."] [--force 1] [--notify script] [--code N] [--bind 1] [--machine-id id]\nEnv: FILEGUARD_SIGNPASS (keygen/init: owner only), FILEGUARD_PASS (backups; auto mode seals one), FILEGUARD_NOTIFY (script that delivers approval codes), FILEGUARD_PUBFP (pinned key fingerprint).');
+} else die('Usage: file-guard.mjs <install|auto|check|rebaseline|anchor|backup|restore-test|keygen|init> --dir <workspace> | skillscan <folder|zip|github-url> [--json] [--all] [--detonate] [--allow RULE:file] [--store dir] [--keyfile path] [--extra abs1,abs2] [--restore 1] [--pubfp fp] [--keep N] [--reason "..."] [--force 1] [--notify script] [--code N] [--bind 1] [--machine-id id]\nEnv: FILEGUARD_SIGNPASS (keygen/init: owner only), FILEGUARD_PASS (backups; auto mode seals one), FILEGUARD_NOTIFY (script that delivers approval codes), FILEGUARD_PUBFP (pinned key fingerprint).');
