@@ -1,51 +1,38 @@
-# file-guard v3.6.3 
+﻿# TrustMe
 
-Tamper wall for AI agents: signed baseline of your agent's core files, content scan of changes, auto-restore with quarantine, tamper-evident log, encrypted backups. Zero dependencies, Node 18+.
+Three layers that guard an AI agent's core files and actions. Honest summary of what each does:
 
-## Quick start
-```
-node scripts/file-guard.mjs install --dir <your-agent-workspace>
-node scripts/file-guard.mjs check   --dir <your-agent-workspace>
-```
-`install` signs a baseline, runs a check, makes an encrypted backup and proves the restore works. Add `--restore 1` to `check` to put tampered files back (the bad copy goes to `quarantine/`). `doctor` prints a plain-language health report. Run with no arguments for all commands.
+| Layer | Part | Does | Does NOT do |
+|---|---|---|---|
+| 1 Detect | `file-guard` skill (signed baseline) | Finds changed core files; re-signing needs a one-time code sent to the owner | Prevent a change; it reports after |
+| 2 Block | `file-guard-wall` plugin ("TrustMe wall") | Denies tool calls before they run: writes to protected files, dangerous commands, outbound actions after untrusted content was read | Stop a determined, creative attacker; regex rules can be evaded |
+| 3 Alarm | `Chu-FileGuardWatch` task (hourly) | Runs layer 1 even when no agent is running; sends a Telegram alert once per new change | Block anything |
 
-## What's new in v3.2 (vs v3.1)
-- Content scan now normalises Unicode (NFKC) and drops invisible/zero-width characters before matching.
-- Scans decoded base64 payloads, not just the raw text.
-- Bug fixes (see the test report below).
+![TrustMe](docs/thumbnail.png)
 
-## Also on agensi.io
-**[file-guard on agensi.io](https://www.agensi.io/skills/file-guard-tamper-wall-for-ai-agents)** - listed there for free (approved 24/11/2026).
+**Get it:** download `trustme-kit-v0.4.zip` from this repo. Layer 1 is the file-guard skill that lives in this repo (see `SKILL.md` and `docs/`); layers 2 and 3 and the live window are in the zip. Free, MIT.
 
-## Test report (24/11/2026)
-Run in a throw-away Linux container (Debian, Node 24, no network, WSL2 host) and on Windows 11 (Node 24). Every row below was actually run; nothing is assumed.
+## Live window
 
-| Test | Linux | Windows |
-|---|---|---|
-| `install` (signed baseline, encrypted backup, restore drill) | pass | pass |
-| clean `check` exits 0 | pass | pass |
-| instruction-override phrase in SOUL.md -> HIGH RISK | pass | pass |
-| `--restore 1` puts the file back, tampered copy kept in `quarantine/` | pass | pass |
-| shell obfuscation -> HIGH RISK | pass | pass |
-| UTF-16 file with an injection phrase -> HIGH RISK | pass | pass |
-| base64-wrapped curl-pipe-sh -> HIGH RISK | pass | not re-run |
-| append-only file (MEMORY) shrinks -> TRUNCATED alert | pass | pass |
-| locked file edited -> alert; new file flagged; 3 MB file seen | pass | not re-run |
-| audit log edited -> alert | pass | not re-run |
-| key swapped (pin mismatch) -> alert | pass | pass |
-| symlink added -> HIGH RISK | pass | not tested (needs admin to create one) |
-| `rebaseline` approval code: sent out-of-band, wrong code refused, code bound to the reason, single use | pass | not re-run |
-| encrypted backup + restore drill | pass | pass |
-| `--bind 1` refused on another machine id, accepted with `--machine-id` | pass | not re-run |
-| two workspaces on one machine | pass | pass (after fix below) |
+`powershell -File trustme.ps1 live` opens a small always-on-top window that shows every tool call the agent makes and how many the wall blocked. It runs on 127.0.0.1:7077 only and reads the plugin's own log; it sends nothing out.
 
-Bugs this testing found, now fixed in this release:
-- `--bind 1` on a system with no readable machine id (e.g. a container without `/etc/machine-id`) silently bound the backup to an empty id, i.e. no binding at all. It now refuses and tells you.
-- On Windows the key fingerprint was pinned in one user-wide variable, so installing a second workspace on the same machine raised a false "key swapped" alert and overwrote the first pin. The per-workspace pin now wins and the variable is only set if empty.
+![Live monitor](docs/live.png)
 
-Not tested: macOS; a real (non-container) Linux host.
+Optional phone alert: copy `live/notify.example.ps1` to `live/notify.ps1` and set `TRUSTME_TG_TOKEN` and `TRUSTME_TG_CHAT`.
 
-## Limits (honest)
-Default mode keeps the signing secret sealed by the OS: it stops accidental and naive tampering, not a fully hijacked agent that can unseal it. The scan is heuristic and does not execute code. It detects, it does not prevent reads. Tested on Windows and in a Linux container (see the test report above); macOS is untested.
+## Plugin rules
+- **files**: no write/edit/move/delete on AGENTS.md, SOUL.md, TOOLS.md, HEARTBEAT.md, IDENTITY.md, the file-guard skill and its baseline. Quote/concat tricks are normalised.
+- **danger**: remote code piped to a shell, encoded PowerShell, secret/credential stores, uploads/POST, raw transfer tools, scheduled-task/autorun persistence, destructive deletes, force push, weakening Defender.
+- **trust**: after `web_fetch`, `web_search`, `browser`, peer reads, outbound shell/network calls, package installs, `message`, vault tools, `cron`, `gateway` are denied until the run ends (a new owner message starts a fresh run). This is the prompt-injection brake.
 
-MIT licence, see LICENSE.
+A denied agent is told to stop and ask the owner. Setting "Trust rule" is in plugin settings.
+
+## Use
+`powershell -File trustme.ps1 status` shows the three layers. `install` (re)creates the task.
+The plugin (`$env:USERPROFILE\aicoworker\aicwgw\plugins\file-guard-wall`, copy in `plugin/`) is turned on only by the owner.
+
+## Known limits
+- Cannot read other tools' MCP or browser clicks; only tool names and params the plugin sees.
+- Legit work that matches a rule (installing a package after reading docs) is denied once; the owner approves and asks again in a new message.
+- The plugin cannot run the baseline check itself (no process permission by design); layer 3 does.
+
