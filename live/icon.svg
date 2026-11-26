@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e9d6a8"/><stop offset="1" stop-color="#c9a468"/></linearGradient>
+<linearGradient id="sh" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b5532f"/><stop offset="1" stop-color="#8a3a1e"/></linearGradient></defs>
+<rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
+<rect x="8" y="8" width="240" height="240" rx="56" fill="none" stroke="#5a3318" stroke-width="6"/>
+<path d="M128 26 L214 56 V122 C214 176 176 212 128 232 C80 212 42 176 42 122 V56 Z" fill="url(#sh)" stroke="#5a3318" stroke-width="7" stroke-linejoin="round"/>
+<path d="M128 40 L200 65 V122 C200 168 169 199 128 217 C87 199 56 168 56 122 V65 Z" fill="#f4ebd8" stroke="#5a3318" stroke-width="4" stroke-linejoin="round"/>
+<g stroke="#5a3318" stroke-width="5" stroke-linejoin="round" stroke-linecap="round">
+<path d="M80 96 L82 54 L116 80 Z" fill="#e8a05a"/><path d="M176 96 L174 54 L140 80 Z" fill="#e8a05a"/>
+<ellipse cx="128" cy="116" rx="52" ry="46" fill="#e8a05a"/></g>
+<path d="M76 124 C79 108 98 110 112 113 L128 118 L144 113 C158 110 177 108 180 124 C178 150 156 166 128 166 C100 166 78 150 76 124Z" fill="#fff3df"/>
+<path d="M120 76 Q128 98 136 76 Q128 72 120 76Z" fill="#fff3df"/>
+<path d="M96 96 Q104 84 112 96" fill="none"/>
+<path d="M94 112 Q103 100 112 112 M144 112 Q153 100 162 112" fill="none" stroke="#2b1a10" stroke-width="6" stroke-linecap="round"/>
+<ellipse cx="88" cy="132" rx="11" ry="7" fill="#f4a6a0" opacity=".75"/><ellipse cx="168" cy="132" rx="11" ry="7" fill="#f4a6a0" opacity=".75"/>
+<ellipse cx="128" cy="128" rx="9" ry="6.5" fill="#2b1a10"/>
+<path d="M128 134 V141 M128 141 Q116 152 106 141 M128 141 Q140 152 150 141" fill="none" stroke="#2b1a10" stroke-width="4" stroke-linecap="round"/>
+<path d="M104 188 L122 203 L156 168" fill="none" stroke="#6b7a45" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M104 188 L122 203 L156 168" fill="none" stroke="#5a3318" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" opacity="0"/>
+</svg>
